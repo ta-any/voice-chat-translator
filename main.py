@@ -9,6 +9,8 @@ MODEL_PATH = "./voice_models/vosk-model-ru-0.42"
 INPUT_OGG = "audio.ogg"
 OUTPUT_WAV = "audio.wav"
 
+print("Start...")
+
 # 1. Загрузка модели
 if not os.path.isdir(MODEL_PATH):
     raise FileNotFoundError(f"Модель не найдена: {os.path.abspath(MODEL_PATH)}")
