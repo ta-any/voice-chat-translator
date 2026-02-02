@@ -1,0 +1,44 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    container_name: telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Для разработки - монтируем исходный код
+      - ./src:/app/src:ro
+      # Для логирования
+      - ./logs:/app/logs
+    stdin_open: true
+    tty: true
+    # Для production можно добавить:
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '0.5'
+    #       memory: 256M
+    networks:
+      - bot-network
+
+  # Пример с PostgreSQL (если боту нужна БД)
+  # postgres:
+  #   image: postgres:15-alpine
+  #   environment:
+  #     POSTGRES_DB: botdb
+  #     POSTGRES_USER: botuser
+  #     POSTGRES_PASSWORD: ${DB_PASSWORD}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
+# volumes:
+#   postgres_data:

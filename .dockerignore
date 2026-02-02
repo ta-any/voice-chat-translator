@@ -1,0 +1,50 @@
+# .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Логи и данные
+logs/
+*.log
+data/
+*.db
+*.sqlite3
+
+# Docker
+*.tar
+*.tar.gz
+docker-compose.override.yml
+
+# Файлы окружения
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Операционная система
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Тестовые покрытия
+.coverage
+htmlcov/
+.pytest_cache/
