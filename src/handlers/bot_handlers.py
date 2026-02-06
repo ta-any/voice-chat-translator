@@ -12,7 +12,8 @@ import os
 router = Router()
 
 from ..services.user_lang import UserLanguageManager
-from ..services.translator import safe_translate 
+from ..services.translator import translate_msg
+
 lang_manager = UserLanguageManager(default_language="en")
 
 
@@ -133,13 +134,20 @@ async def echo_handler(message: Message) -> None:
     
     lang = lang_manager.get_user_language(user_id)
 
-    logger.info(f"Сообщение от {user_id}: {user_text[:50]}...")
-    translate_text = safe_translate(user_text, target_lang=lang)
+    logger.info(f"Сообщение от {str(user_id)[:3]}: {user_text[:50]}...")
+    translate_text = translate_msg(user_text)
     logger.info(f"Сообщение переведино: {translate_text[:50]}...")
-
-    # Отвечаем пользователю
-    await message.answer(
-        f"{user_name} написал: \n"
-        f"*{translate_text}*\n\n",
-        parse_mode=ParseMode.MARKDOWN
-    )
+    if "Таймаут" in translate_text:
+        logger.warning(f"Translation timeout for user {user_id}")
+        await message.answer(
+            f"Ошибка таймаута",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        # Отвечаем пользователю
+        # await message.reply(f"Перевод:\n{translate_text}")
+        await message.answer(
+            f"{user_name} написал: \n"
+            f"*{translate_text}*\n\n",
+            parse_mode=ParseMode.MARKDOWN
+        )
