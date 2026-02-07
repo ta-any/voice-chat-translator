@@ -2,43 +2,85 @@
 version: '3.8'
 
 services:
+  # PostgreSQL — основа для асинхронного бота
+  postgres:
+    image: postgres:15-alpine
+    container_name: telegram-bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-telegram_bot}
+      POSTGRES_USER: ${DB_USER:-botuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      # Оптимизация для асинхронных подключений
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Для кастомных настроек (опционально)
+      # - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "${DB_PORT:-5432}:5432"  # Только для локальной разработки!
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-botuser} -d ${DB_NAME:-telegram_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot-network
+    # Для продакшена — ограничения ресурсов
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 512M
+    #       cpus: '0.5'
+
+  # Телеграм-бот с асинхронной архитектурой
   telegram-bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: telegram-bot
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Переменные для подключения к БД внутри сети Docker
+      DB_HOST: postgres  # ← Имя сервиса, а не localhost!
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-telegram_bot}
+      DB_USER: ${DB_USER:-botuser}
+      DB_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      # Флаг для отладки пула соединений
+      DEBUG: ${DEBUG:-false}
     volumes:
-      # Для разработки - монтируем исходный код
+      # Для разработки — горячая перезагрузка кода
       - ./src:/app/src:ro
-      # Для логирования
       - ./logs:/app/logs
-    stdin_open: true
-    tty: true
-    # Для production можно добавить:
+      # Для Alembic миграций
+      - ./alembic:/app/alembic:ro
+    depends_on:
+      postgres:
+        condition: service_healthy  # ← Ждём готовности БД!
+    networks:
+      - bot-network
+    # Для продакшена — ограничения ресурсов
     # deploy:
     #   resources:
     #     limits:
-    #       cpus: '0.5'
     #       memory: 256M
-    networks:
-      - bot-network
-
-  # Пример с PostgreSQL (если боту нужна БД)
-  # postgres:
-  #   image: postgres:15-alpine
-  #   environment:
-  #     POSTGRES_DB: botdb
-  #     POSTGRES_USER: botuser
-  #     POSTGRES_PASSWORD: ${DB_PASSWORD}
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   networks:
-  #     - bot-network
+    #       cpus: '0.3'
 
 networks:
   bot-network:
     driver: bridge
+    # Для продакшена можно добавить:
+    # name: telegram-bot-network
+    # external: false
 
-# volumes:
-#   postgres_data:
+volumes:
+  postgres_data:
+    # Для продакшена — именованный том с драйвером
+    # driver: local
+    # driver_opts:
+    #   type: 'none'
+    #   o: 'bind'
+    #   device: '/mnt/data/postgres'

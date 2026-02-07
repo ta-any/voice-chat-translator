@@ -9,6 +9,10 @@ from loguru import logger
 
 from .config import Config
 from .handlers.bot_handlers import router  
+from .services.engine import init_db, dispose_db, test_tables
+from .services.bd_debuge import debug_database, inspect_table, clear_all_tables
+from .services.models import Base, User, Chat, Message, Translation, UserChatSettings
+print("Зарегистрированные таблицы:", list(Base.metadata.tables.keys()))
 
 load_dotenv()
 
@@ -48,6 +52,12 @@ async def main() -> None:
         if not bot:
             logger.critical("Не удалось инициализировать бота")
             return
+        await init_db()
+        # await clear_all_tables()
+        await test_tables()
+
+        # await debug_database()
+        await inspect_table("users", limit=3)
 
         # Запускаем бота
         await dp.start_polling(bot)
@@ -57,7 +67,7 @@ async def main() -> None:
     finally:
         logger.warning("👋 Бот остановлен")
         await bot.session.close()
-
+        await dispose_db()
 
 if __name__ == "__main__":
     os.makedirs("logs", exist_ok=True)

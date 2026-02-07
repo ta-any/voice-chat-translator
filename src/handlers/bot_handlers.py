@@ -13,42 +13,150 @@ router = Router()
 
 from ..services.user_lang import UserLanguageManager
 from ..services.translator import translate_msg
+from datetime import datetime
+from sqlalchemy.dialects.postgresql import insert
+
+from ..services.engine import AsyncSessionLocal
+from ..services.models import User, Chat
 
 lang_manager = UserLanguageManager(default_language="en")
+
+
+# Маппинг языковых кодов Telegram → NLLB
+TELEGRAM_TO_NLLB = {
+    'en': 'eng_Latn',
+    'ru': 'rus_Cyrl',
+    'de': 'deu_Latn',
+    'fr': 'fra_Latn',
+    'es': 'spa_Latn',
+    'zh': 'zho_Hans',
+    'ja': 'jpn_Jpan',
+    'ko': 'kor_Hang',
+    'uk': 'ukr_Cyrl',
+    'be': 'bel_Cyrl',
+    'kk': 'kaz_Cyrl',
+    'hy': 'hye_Armn',
+    # Добавь другие языки по необходимости
+}
+
+def map_language_code(telegram_code: str) -> str:
+    """Конвертирует код языка Telegram в формат NLLB"""
+    if not telegram_code:
+        return 'rus_Cyrl'  # Язык по умолчанию
+    
+    # Обрабатываем коды вида 'en-GB', 'ru-RU'
+    base_code = telegram_code.split('-')[0].lower()
+    return TELEGRAM_TO_NLLB.get(base_code, 'rus_Cyrl')
 
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
     """
-    Обработчик команды /start
+    Обработчик команды /start — сохраняет пользователя и чат в БД
     """
     user = message.from_user
-    user_id = user.id
-    logger.info("clear all data users")
-    lang_manager.clear_all()
-    logger.info(f"Реакция на команду /start пользователем: {user.id}")
-
-    if user.language_code:
-        lang_manager.set_user_language(user_id, "en")
-    else: 
-        logger.info(f"Нет маркировки языка у пользователя {user}")
-        lang_manager.set_user_language(user_id, "ru")
-
+    chat = message.chat
     
-    # Получаем язык пользователя
-    user_lang = lang_manager.get_user_language(user_id)
+    logger.info(f"🚀 /start от пользователя {user.id} в чате {chat.id}")
     
-    # Мультиязычный ответ
-    greetings = {
-        "ru": f"Привет, {user.first_name}! 👋",
-        "en": f"Hello, {user.first_name}! 👋",
-        "de": f"Hallo, {user.first_name}! 👋"
-    }
-    
-    greeting = greetings.get(user_lang, greetings["en"])
-    await message.answer(
-        f"{greeting}"
-    )
+    async with AsyncSessionLocal() as session:
+        try:
+            # === ШАГ 1: Сохраняем/обновляем пользователя ===
+            # Используем PostgreSQL UPSERT (INSERT ... ON CONFLICT DO UPDATE)
+            user_stmt = insert(User).values(
+                telegram_user_id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                default_src_lang='auto',  # Автоматическое определение языка
+                default_tgt_lang=map_language_code(user.language_code),
+                style='formal',  # Стиль по умолчанию
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            ).on_conflict_do_update(
+                index_elements=['telegram_user_id'],  # Уникальный ключ
+                set_={
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'default_tgt_lang': map_language_code(user.language_code),
+                    'updated_at': datetime.utcnow()
+                }
+            ).returning(User)
+            
+            user_result = await session.execute(user_stmt)
+            db_user = user_result.scalar_one()
+            await session.commit()
+            
+            logger.info(f"✅ Пользователь {user.id} сохранён/обновлён (ID в БД: {db_user.id})")
+            
+            # === ШАГ 2: Сохраняем/обновляем чат ===
+            chat_stmt = insert(Chat).values(
+                telegram_chat_id=chat.id,
+                type=chat.type,
+                title=chat.title,
+                settings_json={
+                    "auto_translate": False,
+                    "default_target_lang": map_language_code(user.language_code),
+                    "allowed_languages": ["eng_Latn", "rus_Cyrl", "deu_Latn", "fra_Latn"],
+                    "translation_buttons": True
+                },
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            ).on_conflict_do_update(
+                index_elements=['telegram_chat_id'],
+                set_={
+                    'type': chat.type,
+                    'title': chat.title,
+                    'updated_at': datetime.utcnow()
+                }
+            ).returning(Chat)
+            
+            chat_result = await session.execute(chat_stmt)
+            db_chat = chat_result.scalar_one()
+            await session.commit()
+            
+            logger.info(f"✅ Чат {chat.id} сохранён/обновлён (ID в БД: {db_chat.id}, тип: {chat.type})")
+            
+            # === ШАГ 3: Устанавливаем язык для менеджера ===
+            target_lang = map_language_code(user.language_code)
+            lang_manager.set_user_language(user.id, target_lang.split('_')[0])  # 'eng_Latn' → 'en'
+            
+            # === ШАГ 4: Формируем мультиязычное приветствие ===
+            greetings = {
+                "ru": (
+                    f"Привет, {user.first_name or 'друг'}! 👋\n\n"
+                    "Я бот-переводчик. Просто отправь сообщение в чат, и я предложу варианты перевода.\n"
+                    "Используй команду /language для изменения языка перевода."
+                ),
+                "en": (
+                    f"Hello, {user.first_name or 'friend'}! 👋\n\n"
+                    "I'm a translation bot. Just send a message in the chat, and I'll offer translation options.\n"
+                    "Use /language command to change translation language."
+                ),
+                "de": (
+                    f"Hallo, {user.first_name or 'Freund'}! 👋\n\n"
+                    "Ich bin ein Übersetzungsbot. Sende einfach eine Nachricht im Chat, und ich biete Übersetzungsoptionen an.\n"
+                    "Verwende den Befehl /language, um die Übersetzungssprache zu ändern."
+                )
+            }
+            
+            # Определяем язык приветствия на основе языка пользователя
+            lang_prefix = target_lang.split('_')[0]  # 'eng_Latn' → 'eng'
+            lang_short = lang_prefix[:2]  # 'eng' → 'en'
+            greeting = greetings.get(lang_short, greetings["en"])
+            
+            # === ШАГ 5: Отправляем приветствие ===
+            await message.answer(greeting)
+            
+            logger.info(f"📨 Приветствие отправлено пользователю {user.id} на языке {lang_short}")
+            
+        except Exception as e:
+            logger.exception(f"❌ Ошибка при обработке /start для пользователя {user.id}: {e}")
+            await session.rollback()
+            await message.answer(
+                "Произошла ошибка при инициализации. Попробуйте позже."
+            )
 
 @router.message(Command("help"))
 async def command_help_handler(message: Message) -> None:

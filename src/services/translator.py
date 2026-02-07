@@ -208,4 +208,4 @@ def translate_msg(text: str) -> str:
     print(result_msg)
     return result_msg
 
-# if __name__ == "__main__":
+#if __name__ == "__main__":
